@@ -23,9 +23,11 @@ ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")   # optional strict applic
 MODEL_NAME = os.environ.get("MODEL_NAME", "deepseek-chat")
 MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "deepseek")
 
-# Optional Discord webhook for async completion delivery: when a request
-# outlives the fast path, the final Hermes reply is posted here.
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+# Optional Discord delivery for async completions: uses the Hermes Discord
+# bot to post the finished result to a channel when a request outlives the
+# fast path.
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+DISCORD_CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID", "")
 
 # How long we let Hermes think before we tell Alexa "I'm working on it"
 # and detach. Alexa's own hard limit is ~8s; we leave headroom for network
@@ -125,14 +127,18 @@ async def _ask_hermes(query: str, session_key: str, *, timeout: float) -> str:
 
 
 async def _post_to_discord(text: str) -> None:
-    """Best-effort async completion delivery to the configured webhook."""
-    if not DISCORD_WEBHOOK_URL:
+    """Best-effort async completion delivery via the Hermes Discord bot."""
+    if not DISCORD_BOT_TOKEN or not DISCORD_CHANNEL_ID:
         return
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            await client.post(DISCORD_WEBHOOK_URL, json={"content": text[:1900]})
+            await client.post(
+                f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                json={"content": f"🤖 **Hermes via Alexa** — {text[:1900]}"},
+            )
     except Exception:
-        logger.exception("Discord webhook delivery failed")
+        logger.exception("Discord delivery failed")
 
 
 async def _fire_and_forget_hermes(query: str, session_key: str) -> None:
@@ -140,8 +146,8 @@ async def _fire_and_forget_hermes(query: str, session_key: str) -> None:
 
     Hermes enforces its own safety/approval policy on the far side regardless
     of which channel triggered the turn -- the bridge does not attempt to
-    bypass or pre-authorize anything. The completed reply is delivered to the
-    configured Discord webhook (best effort).
+    bypass or pre-authorize anything. The completed reply is delivered to
+    Discord (best effort).
     """
     try:
         reply = await _ask_hermes(query, session_key, timeout=600.0)
