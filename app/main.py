@@ -3,6 +3,7 @@ import time
 import asyncio
 import logging
 import hashlib
+import json
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -27,7 +28,7 @@ DEFAULT_ASYNC_NOTE = (
 
 app = FastAPI(
     title="Alexa-Hermes Bridge",
-    version="1.0.1",
+    version="1.0.2",
     description="Accepts Alexa Custom Skill requests and forwards them to Hermes Agent's OpenAI-compatible API.",
 )
 
@@ -56,6 +57,39 @@ def _speech_response(text: str, *, end_session: bool = True) -> dict:
             "shouldEndSession": end_session,
         },
     }
+
+
+def _unwrap_structured_reply(text: str) -> str:
+    """Extract spoken text when the model wrapped its answer in a JSON envelope.
+
+    Local models (e.g. qwen3-8b) often answer as structured JSON like
+    {"status": "success", "value": "Hello!"} — which Alexa would otherwise
+    read aloud as raw JSON. If the reply parses as JSON, pull the first
+    human-readable string field (value/text/message/response/answer/content,
+    then any string values); otherwise return the text unchanged.
+    """
+    if not text:
+        return text
+    t = text.strip()
+    if not (t.startswith("{") or t.startswith("[")):
+        return text
+    try:
+        data = json.loads(t)
+    except Exception:
+        return text
+    if isinstance(data, dict):
+        for key in ("value", "text", "message", "response", "answer", "content", "output"):
+            v = data.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        strs = [str(v) for v in data.values() if isinstance(v, str) and v.strip()]
+        if strs:
+            return " ".join(strs)
+    elif isinstance(data, list):
+        strs = [str(v) for v in data if isinstance(v, str) and v.strip()]
+        if strs:
+            return " ".join(strs)
+    return text
 
 
 async def _ask_hermes(query: str, session_key: str, *, timeout: float) -> str:
@@ -154,7 +188,7 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
             _ask_hermes(query, session_key, timeout=FAST_PATH_TIMEOUT_SECONDS),
             timeout=FAST_PATH_TIMEOUT_SECONDS,
         )
-        return _speech_response(reply)
+        return _speech_response(_unwrap_structured_reply(reply))
     except (asyncio.TimeoutError, httpx.TimeoutException):
         elapsed = time.monotonic() - start
         logger.info(
