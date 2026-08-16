@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alexa-bridge
+  namespace: alexa-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alexa-bridge
+  template:
+    metadata:
+      labels:
+        app: alexa-bridge
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      containers:
+      - name: alexa-bridge
+        # Built and pushed by .github/workflows/docker-publish.yml (added
+        # in a follow-up commit, mirroring chatgpt-overseerr-bridge).
+        image: ghcr.io/xmploryg/alexa-hermes-bridge:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: bridge-config
+        - secretRef:
+            name: bridge-secrets
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-config
+  namespace: alexa-bridge
+data:
+  # Hermes's OpenAI-compatible API server on the Unraid host, reachable
+  # cross-VLAN from k3s (per existing network policy).
+  HERMES_API_URL: "http://192.168.1.17:8642/v1"
+  FAST_PATH_TIMEOUT_SECONDS: "6.0"
+  # Optional: set to the Alexa Skill's applicationId once created, to
+  # reject requests from any other skill. Leave blank to skip the check
+  # (not recommended once this is reachable from the internet).
+  ALEXA_SKILL_ID: ""
