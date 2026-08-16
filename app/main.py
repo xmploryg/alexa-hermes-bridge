@@ -17,18 +17,29 @@ HERMES_API_URL = os.environ["HERMES_API_URL"]          # e.g. http://192.168.1.1
 HERMES_API_KEY = os.environ["HERMES_API_KEY"]           # matches API_SERVER_KEY in Hermes .env
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")   # optional strict application.applicationId check
 
+# Model pin for the Hermes call. The API server honors an explicit provider
+# per-request, so Alexa can stay on a fast/cheap model regardless of the
+# global Hermes default (which the user tunes elsewhere).
+MODEL_NAME = os.environ.get("MODEL_NAME", "deepseek-chat")
+MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "deepseek")
+
+# Optional Discord webhook for async completion delivery: when a request
+# outlives the fast path, the final Hermes reply is posted here.
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
 # How long we let Hermes think before we tell Alexa "I'm working on it"
 # and detach. Alexa's own hard limit is ~8s; we leave headroom for network
 # + Alexa's own TTS/response packaging.
 FAST_PATH_TIMEOUT_SECONDS = float(os.environ.get("FAST_PATH_TIMEOUT_SECONDS", "6.0"))
 
-DEFAULT_ASYNC_NOTE = (
-    "the full result will follow on your usual Hermes channel"
+DEFAULT_ASYNC_NOTE = os.environ.get(
+    "ASYNC_NOTE",
+    "Let me work on that — I'll message you on Discord when I'm done.",
 )
 
 app = FastAPI(
     title="Alexa-Hermes Bridge",
-    version="1.0.2",
+    version="1.1.0",
     description="Accepts Alexa Custom Skill requests and forwards them to Hermes Agent's OpenAI-compatible API.",
 )
 
@@ -100,7 +111,8 @@ async def _ask_hermes(query: str, session_key: str, *, timeout: float) -> str:
         "X-Hermes-Session-Key": session_key,
     }
     payload = {
-        "model": "hermes-agent",
+        "model": MODEL_NAME,
+        "provider": MODEL_PROVIDER,
         "messages": [{"role": "user", "content": query}],
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -112,15 +124,28 @@ async def _ask_hermes(query: str, session_key: str, *, timeout: float) -> str:
     return data["choices"][0]["message"]["content"]
 
 
+async def _post_to_discord(text: str) -> None:
+    """Best-effort async completion delivery to the configured webhook."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            await client.post(DISCORD_WEBHOOK_URL, json={"content": text[:1900]})
+    except Exception:
+        logger.exception("Discord webhook delivery failed")
+
+
 async def _fire_and_forget_hermes(query: str, session_key: str) -> None:
     """Let a long-running Hermes turn finish after we've already answered Alexa.
 
     Hermes enforces its own safety/approval policy on the far side regardless
     of which channel triggered the turn -- the bridge does not attempt to
-    bypass or pre-authorize anything.
+    bypass or pre-authorize anything. The completed reply is delivered to the
+    configured Discord webhook (best effort).
     """
     try:
-        await _ask_hermes(query, session_key, timeout=600.0)
+        reply = await _ask_hermes(query, session_key, timeout=600.0)
+        await _post_to_discord(_unwrap_structured_reply(reply))
     except Exception:
         logger.exception("Detached Hermes turn failed for session %s", session_key)
 
@@ -196,7 +221,7 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
         )
         asyncio.create_task(_fire_and_forget_hermes(query, session_key))
         return _speech_response(
-            f"I'm working on that — {DEFAULT_ASYNC_NOTE}."
+            f"I'm working on that — {DEFAULT_ASYNC_NOTE}"
         )
     except httpx.HTTPStatusError as exc:
         logger.error("Hermes API error %s: %s", exc.response.status_code, exc.response.text)
