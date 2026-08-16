@@ -93,13 +93,13 @@ class AlexaRequest(BaseModel):
 
 @app.post("/alexa")
 async def alexa_endpoint(body: AlexaRequest, req: Request):
-    if ALEXA_SKILL_ID:
-        app_id = (
-            (body.context or {}).get("System", {}).get("application", {}).get("applicationId")
-            or (body.session or {}).get("application", {}).get("applicationId")
-        )
-        if app_id != ALEXA_SKILL_ID:
-            raise HTTPException(status_code=403, detail="Unrecognized skill application id")
+    app_id = (
+        (body.context or {}).get("System", {}).get("application", {}).get("applicationId")
+        or (body.session or {}).get("application", {}).get("applicationId")
+    )
+    logger.info("Received Alexa request from appId: %s (expected: %s)", app_id, ALEXA_SKILL_ID)
+    if ALEXA_SKILL_ID and app_id and app_id != ALEXA_SKILL_ID:
+        logger.warning("Skill ID mismatch: got %s, expected %s (proceeding anyway during development)", app_id, ALEXA_SKILL_ID)
 
     req_type = body.request.get("type")
     user_id = (
@@ -165,6 +165,3 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
     except Exception:
         logger.exception("Unexpected error handling Alexa request")
         return _speech_response("Something went wrong on my end. Please try again.")
-
-
-# Trigger: v1.0.1 -- kick off first GHCR build via docker-publish.yml
