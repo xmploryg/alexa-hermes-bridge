@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+import hashlib
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -26,7 +27,7 @@ DEFAULT_ASYNC_NOTE = (
 
 app = FastAPI(
     title="Alexa-Hermes Bridge",
-    version="1.0.0",
+    version="1.0.1",
     description="Accepts Alexa Custom Skill requests and forwards them to Hermes Agent's OpenAI-compatible API.",
 )
 
@@ -37,8 +38,14 @@ def health():
 
 
 def _session_key(alexa_user_id: str) -> str:
-    """Stable per-Alexa-user Hermes session/memory scope."""
-    return f"alexa:{alexa_user_id}"
+    """Stable per-Alexa-user Hermes session/memory scope.
+
+    Alexa user IDs (amzn1.ask.account.*) can be several hundred characters
+    long, which Hermes rejects ("Session key too long"). Hash to a short,
+    stable key: same user always maps to the same key.
+    """
+    digest = hashlib.sha256(alexa_user_id.encode("utf-8")).hexdigest()[:32]
+    return f"alexa:{digest}"
 
 
 def _speech_response(text: str, *, end_session: bool = True) -> dict:
