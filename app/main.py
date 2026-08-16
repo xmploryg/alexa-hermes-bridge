@@ -165,3 +165,6 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
     except Exception:
         logger.exception("Unexpected error handling Alexa request")
         return _speech_response("Something went wrong on my end. Please try again.")
+
+
+# Trigger: v1.0.1 -- kick off first GHCR build via docker-publish.yml
