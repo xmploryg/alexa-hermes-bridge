@@ -39,39 +39,43 @@ Alexa expects a response in ~8 seconds. The bridge calls Hermes with a
 
 - Hermes Agent's OpenAI-compatible API server enabled (`platforms.api_server`
   in Hermes's `config.yaml`, or `API_SERVER_ENABLED=true` in `.env`), with
-  `API_SERVER_KEY` set. See the Hermes docs/skill for exact config keys.
+  `API_SERVER_KEY` set.
 - Hermes reachable from the k3s cluster over the LAN
   (`http://192.168.1.17:8642`) — already true per existing cross-VLAN
   routing.
-- A container registry to push the image to (this repo ships a GitHub
-  Actions workflow that pushes to both Docker Hub and GHCR — add
-  `.github/workflows/docker-publish.yml` manually; see below).
 - Cloudflare Tunnel or public DNS + Traefik ingress, same as other
   services in `phoenixlab` (this repo mirrors `chatgpt-overseerr-bridge`).
 - `cert-manager` + `letsencrypt-production` ClusterIssuer already deployed.
 
 ## Build and push the image
 
-The CI workflow file couldn't be pushed automatically (GitHub blocks the
-`workflow` scope for the bot token used here). Copy the content from
-`chatgptoverseerrbridge/.github/workflows/docker-publish.yml` in this org,
-replacing `IMAGE_NAME: chatgpt-overseerr-bridge` with
-`IMAGE_NAME: alexa-hermes-bridge`, and commit it to
-`.github/workflows/docker-publish.yml` here.
+`.github/workflows/docker-publish.yml` builds and pushes to **GHCR only**
+(`ghcr.io/xmploryg/alexa-hermes-bridge`) on every push to `main` that
+touches `app/`, `Dockerfile`, or `requirements.txt`.
 
-### One-time GitHub repo setup
+**No manual secrets or variables required.** It authenticates with the
+built-in `secrets.GITHUB_TOKEN` GitHub provides automatically to every
+Actions run, and tags images using `github.repository` — zero repo-level
+or org-level configuration needed.
 
-In this repo → **Settings → Secrets and variables → Actions**, add:
+Why GHCR-only instead of also pushing to Docker Hub:
 
-| Type | Name | Value |
-|------|------|-------|
-| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token |
-| Variable | `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| Variable | `GHCR_USERNAME` | Your GitHub username |
+| | GHCR | Docker Hub (free tier) |
+|---|---|---|
+| Auth in CI | Automatic (`GITHUB_TOKEN`) | Manual token + secrets setup |
+| Private image pulls | Unlimited | Rate-limited (~100–200 pulls / 6h per IP) |
+| Private repos | Unlimited, free | 1 free, then paid |
+| Co-located with source | Yes | No |
 
-The workflow runs automatically on the next matching push once added.
+For a private homelab cluster pulling images from inside the LAN, GHCR has
+no real downside — Docker Hub is only worth it for images meant to be
+pulled anonymously by the public via a bare `docker pull name/image`.
 
-### Manual build (until CI is wired up)
+If the GHCR package defaults to private, either make it public (Package
+settings → Change visibility) or create an image pull secret in the
+`alexa-bridge` namespace with a GitHub PAT that has `read:packages`.
+
+### Manual build (optional, e.g. before CI has run once)
 
 ```bash
 git clone https://github.com/xmploryg/alexa-hermes-bridge.git
@@ -163,6 +167,8 @@ alexa-hermes-bridge/
 │   └── main.py              # FastAPI bridge app
 ├── requirements.txt
 ├── Dockerfile
+├── .github/workflows/
+│   └── docker-publish.yml   # GHCR-only build & push, zero secrets needed
 ├── k8s/
 │   ├── namespace.yaml
 │   ├── secret.yaml          # template only — do not commit real values
