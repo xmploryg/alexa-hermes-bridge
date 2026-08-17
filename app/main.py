@@ -41,7 +41,7 @@ DEFAULT_ASYNC_NOTE = os.environ.get(
 
 app = FastAPI(
     title="Alexa-Hermes Bridge",
-    version="1.1.0",
+    version="1.1.1",
     description="Accepts Alexa Custom Skill requests and forwards them to Hermes Agent's OpenAI-compatible API.",
 )
 
@@ -174,6 +174,8 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
         logger.warning("Skill ID mismatch: got %s, expected %s (proceeding anyway during development)", app_id, ALEXA_SKILL_ID)
 
     req_type = body.request.get("type")
+    session_new = bool((body.session or {}).get("new"))
+    logger.info("Alexa request type=%s session_new=%s", req_type, session_new)
     user_id = (
         (body.context or {}).get("System", {}).get("user", {}).get("userId")
         or (body.session or {}).get("user", {}).get("userId")
@@ -187,6 +189,7 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
         )
 
     if req_type == "SessionEndedRequest":
+        logger.info("Session ended: %s", body.request.get("reason", ""))
         return {"version": "1.0", "response": {}}
 
     if req_type != "IntentRequest":
@@ -207,6 +210,7 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
 
     slots = intent.get("slots", {})
     query = (slots.get("Query") or {}).get("value") or ""
+    logger.info("Intent %s query=%r", intent_name, query)
     if not query:
         return _speech_response(
             "I didn't catch what you wanted to ask Hermes. Try again?",
@@ -226,9 +230,7 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
             "Fast path timed out after %.1fs for session %s; detaching", elapsed, session_key
         )
         asyncio.create_task(_fire_and_forget_hermes(query, session_key))
-        return _speech_response(
-            f"I'm working on that — {DEFAULT_ASYNC_NOTE}"
-        )
+        return _speech_response(DEFAULT_ASYNC_NOTE)
     except httpx.HTTPStatusError as exc:
         logger.error("Hermes API error %s: %s", exc.response.status_code, exc.response.text)
         return _speech_response(
