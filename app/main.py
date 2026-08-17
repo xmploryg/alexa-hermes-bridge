@@ -39,9 +39,43 @@ DEFAULT_ASYNC_NOTE = os.environ.get(
     "Let me work on that — I'll message you on Discord when I'm done.",
 )
 
+HELP_MENU = os.environ.get(
+    "HELP_MENU",
+    "🤖 **Hermes via Alexa — example requests**\n"
+    "\n"
+    "**Instant answers (fast):**\n"
+    "1. what do you know about me\n"
+    "2. what's my Discord username\n"
+    "3. what's the IP of my Unraid server\n"
+    "4. what's my Home Assistant address\n"
+    "5. what model are you running\n"
+    "6. what skills do you have\n"
+    "7. explain how Ceph storage works\n"
+    "8. translate good morning to Japanese\n"
+    "9. what's 23 times 47\n"
+    "10. tell me a fun fact\n"
+    "\n"
+    "**Async — result posted to this DM (homelab):**\n"
+    "11. check the health of phoenixlab cluster\n"
+    "12. is the immich service up\n"
+    "13. troubleshoot why plex is slow\n"
+    "14. compile a curated list of my homelab services\n"
+    "15. how much storage is left on the Ceph cluster\n"
+    "16. is anything broken in my homelab\n"
+    "\n"
+    "**Async — research & life (result in this DM):**\n"
+    "17. research the latest k3s release\n"
+    "18. find Home Assistant 2026 highlights and report\n"
+    "19. recommend a restaurant for dinner tonight\n"
+    "20. research a topic and post a summary here\n"
+    "21. what's the weather today\n"
+    "22. remind me at 9am tomorrow to water the plants\n"
+    "23. write a script to back up Immich and post it here\n",
+)
+
 app = FastAPI(
     title="Alexa-Hermes Bridge",
-    version="1.1.1",
+    version="1.2.0",
     description="Accepts Alexa Custom Skill requests and forwards them to Hermes Agent's OpenAI-compatible API.",
 )
 
@@ -127,7 +161,7 @@ async def _ask_hermes(query: str, session_key: str, *, timeout: float) -> str:
 
 
 async def _post_to_discord(text: str) -> None:
-    """Best-effort async completion delivery via the Hermes Discord bot."""
+    """Best-effort delivery via the Hermes Discord bot."""
     if not DISCORD_BOT_TOKEN or not DISCORD_CHANNEL_ID:
         return
     try:
@@ -135,7 +169,7 @@ async def _post_to_discord(text: str) -> None:
             await client.post(
                 f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages",
                 headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                json={"content": f"🤖 **Hermes via Alexa** — {text[:1900]}"},
+                json={"content": text[:1900]},
             )
     except Exception:
         logger.exception("Discord delivery failed")
@@ -151,7 +185,7 @@ async def _fire_and_forget_hermes(query: str, session_key: str) -> None:
     """
     try:
         reply = await _ask_hermes(query, session_key, timeout=600.0)
-        await _post_to_discord(_unwrap_structured_reply(reply))
+        await _post_to_discord(f"🤖 **Hermes via Alexa** — {_unwrap_structured_reply(reply)[:1900]}")
     except Exception:
         logger.exception("Detached Hermes turn failed for session %s", session_key)
 
@@ -185,7 +219,9 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
 
     if req_type == "LaunchRequest":
         return _speech_response(
-            "Hermes is listening. What do you need?", end_session=False
+            "Hermes is listening. Ask me anything about your homelab, smart home, "
+            "or say help for example requests.",
+            end_session=False,
         )
 
     if req_type == "SessionEndedRequest":
@@ -202,9 +238,10 @@ async def alexa_endpoint(body: AlexaRequest, req: Request):
         return _speech_response("Goodbye.")
 
     if intent_name in ("AMAZON.HelpIntent",):
+        asyncio.create_task(_post_to_discord(HELP_MENU))
         return _speech_response(
-            "Ask me anything, like homelab status, Kubernetes health, "
-            "or to control a smart home device.",
+            "I've sent a menu of example requests to your Discord. "
+            "Try: check the health of phoenixlab cluster, or what do you know about me.",
             end_session=False,
         )
 
