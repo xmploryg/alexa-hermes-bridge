@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 HERMES_API_URL = os.environ["HERMES_API_URL"]          # e.g. http://192.168.1.17:8642/v1
 HERMES_API_KEY = os.environ["HERMES_API_KEY"]           # matches API_SERVER_KEY in Hermes .env
 ALEXA_SKILL_ID = os.environ.get("ALEXA_SKILL_ID", "")   # optional strict application.applicationId check
+ALEXA_SESSION_KEY = os.environ.get("ALEXA_SESSION_KEY", "master-session")
 
 # Model pin for the Hermes call. The API server honors an explicit provider
 # per-request, so Alexa can stay on a fast/cheap model regardless of the
@@ -86,13 +87,14 @@ def health():
 
 
 def _session_key(alexa_user_id: str) -> str:
-    """Stable per-Alexa-user Hermes session/memory scope.
+    """Return one persistent Hermes session for all Alexa turns.
 
-    Alexa user IDs (amzn1.ask.account.*) can be several hundred characters
-    long, which Hermes rejects ("Session key too long"). Hash to a short,
-    stable key: same user always maps to the same key.
+    We intentionally ignore the Alexa user id here so the bridge always uses a
+    single long-lived Hermes conversation. This keeps the Hermes dashboard from
+    spawning a new chat for every Alexa invocation while still preserving one
+    continuous master thread for the voice channel.
     """
-    digest = hashlib.sha256(alexa_user_id.encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(ALEXA_SESSION_KEY.encode("utf-8")).hexdigest()[:32]
     return f"alexa:{digest}"
 
 
